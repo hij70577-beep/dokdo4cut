@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Gowun+Dodum&display=swap" rel="stylesheet">
+<style>
+  :root { --navy:#0b3d91; --sea:#1fa2d6; --sun:#ffd54a; --ink:#0d1b2a; --paper:#f3f9ff; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; }
+  body { font-family:'Gowun Dodum', sans-serif; color:var(--ink);
+    background:linear-gradient(180deg,#dff2ff 0%,#9fd8f5 60%,#3aa7d8 100%); }
+  #app { min-height:100vh; display:flex; flex-direction:column; }
+  header.top { text-align:center; padding:18px 16px 6px; }
+  header.top h1 { font-family:'Black Han Sans', sans-serif; font-size:clamp(36px,6vw,64px);
+    margin:0; color:var(--navy); letter-spacing:2px; text-shadow:0 3px 0 #fff; }
+  header.top p { margin:4px 0 0; font-size:20px; color:#163e6b; }
+  main { flex:1; display:flex; gap:24px; padding:16px 24px 24px; align-items:flex-start; justify-content:center; flex-wrap:wrap; }
+  #stage { flex:1 1 640px; max-width:900px; }
+  .camWrap { position:relative; width:100%; aspect-ratio:520/350; border-radius:18px; overflow:hidden;
+    background:#0d1b2a; box-shadow:0 12px 30px rgba(11,61,145,.35); border:6px solid #fff; }
+  video { width:100%; height:100%; object-fit:cover; display:block; }
+  video.mirror { transform:scaleX(-1); }
+  #switchBtn { position:absolute; right:14px; bottom:14px; width:auto; margin:0; padding:10px 16px; font-size:18px;
+    background:rgba(255,255,255,.85); color:#0b3d91; border-radius:999px; display:none; z-index:2; }
+  /* 갤럭시탭 세로 화면: 카메라 위, 버튼 아래로 */
+  @media (orientation: portrait) and (max-width: 1100px) {
+    main { flex-direction:column; align-items:stretch; justify-content:flex-start; flex:none; }
+    #stage, aside#panel { max-width:none; flex:none; width:100%; }
+  }
+  #count { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    font-family:'Black Han Sans'; font-size:min(30vw,220px); color:#fff; text-shadow:0 6px 24px rgba(0,0,0,.5);
+    pointer-events:none; }
+  #flash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity .35s; }
+  #shotBadge { position:absolute; top:14px; left:14px; background:rgba(11,61,145,.85); color:#fff;
+    padding:6px 14px; border-radius:999px; font-size:20px; display:none; }
+  #camError { position:absolute; inset:0; display:flex; flex-direction:column; gap:12px; align-items:center; justify-content:center; text-align:center;
+    color:#fff; padding:24px; font-size:18px; line-height:1.6; background:#0d1b2a; }
+  .thumbs { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:12px; }
+  .thumbs div { aspect-ratio:520/350; border-radius:10px; background:rgba(255,255,255,.55);
+    border:3px dashed rgba(11,61,145,.35); overflow:hidden; display:flex; align-items:center; justify-content:center;
+    color:#3b5f8a; font-size:18px; }
+  .thumbs canvas { width:100%; height:100%; display:block; }
+  aside#panel { flex:0 1 320px; background:rgba(255,255,255,.9); border-radius:18px; padding:22px;
+    box-shadow:0 10px 26px rgba(11,61,145,.25); }
+  aside h2 { font-family:'Black Han Sans'; color:var(--navy); margin:0 0 12px; font-weight:400; }
+  label { display:block; font-size:16px; margin:12px 0 6px; color:#163e6b; }
+  input, select { width:100%; font:inherit; font-size:18px; padding:10px 12px; border:2px solid #b9d7f0;
+    border-radius:10px; background:#fff; }
+  button { font-family:'Black Han Sans'; font-size:24px; border:0; border-radius:14px; padding:16px 18px;
+    cursor:pointer; width:100%; margin-top:14px; transition:transform .1s;
+    touch-action:manipulation; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none; }
+  button:active { transform:scale(.97); }
+  button:disabled { opacity:.5; cursor:default; }
+  .primary { background:var(--navy); color:#fff; box-shadow:0 6px 0 #062457; }
+  .accent { background:var(--sun); color:#3a2a00; box-shadow:0 6px 0 #c9a21c; }
+  .ghost { background:#e6f1fb; color:var(--navy); font-size:20px; }
+  .hint { font-size:15px; color:#46668c; line-height:1.6; margin-top:14px; }
+  /* 결과 화면 */
+  #result { position:fixed; inset:0; background:rgba(5,20,45,.82); display:flex; align-items:center;
+    justify-content:center; gap:28px; padding:20px; flex-wrap:wrap; z-index:10; }
+  #result[hidden] { display:none; }
+  #preview { height:min(86vh,900px); aspect-ratio:1/3; border-radius:8px; box-shadow:0 10px 40px rgba(0,0,0,.5); background:#fff; }
+  .resPanel { width:340px; background:#fff; border-radius:18px; padding:22px; }
+  .themes { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .themes button { font-size:17px; padding:10px; margin:0; box-shadow:none; border:3px solid transparent; color:#fff; }
+  .themes button.on { border-color:var(--ink); }
+  #status { min-height:24px; margin-top:12px; font-size:16px; color:#163e6b; }
+  /* 인쇄 영역 */
+  #printArea { display:none; }
+  @media print {
+    @page { size:4in 6in; margin:0; }
+    html, body { background:#fff !important; height:auto; }
+    #app, #result { display:none !important; }
+    #printArea { display:block; width:4in; height:6in; }
+    #printArea img { width:4in; height:6in; display:block; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <h1>📸 독도 네컷</h1>
+    <p id="eventName">독도교육주간</p>
+  </header>
+  <main>
+    <section id="stage">
+      <div class="camWrap">
+        <video id="video" autoplay playsinline muted></video>
+        <div id="count"></div>
+        <div id="flash"></div>
+        <div id="shotBadge"></div>
+        <div id="camError" hidden></div>
+        <button id="switchBtn" type="button">🔄 카메라 전환</button>
+      </div>
+      <div class="thumbs" id="thumbs">
+        <div>1</div><div>2</div><div>3</div><div>4</div>
+      </div>
+    </section>
+    <aside id="panel">
+      <h2>촬영 준비</h2>
+      <label for="name">이름 (선택)</label>
+      <input id="name" maxlength="20" placeholder="예: 3학년 2반 김독도">
+      <label for="interval">카운트다운</label>
+      <select id="interval">
+        <option value="3">3초</option>
+        <option value="4" selected>4초</option>
+        <option value="5">5초</option>
+      </select>
+      <button id="startBtn" class="primary" disabled>📸 촬영 시작</button>
+      <p class="hint" id="hint">
+        버튼을 누르면 카운트다운 후 <b>4번</b> 촬영해요.<br>
+        촬영이 끝나면 프레임 색과 문구를 고른 뒤<br><b>인쇄하기</b>를 누르세요.
+      </p>
+    </aside>
+  </main>
+</div>
+
+<div id="result" hidden>
+  <img id="preview" alt="네컷 미리보기">
+  <div class="resPanel">
+    <h2 style="font-family:'Black Han Sans';color:#0b3d91;margin:0 0 10px;font-weight:400">프레임 꾸미기</h2>
+    <label>프레임 색</label>
+    <div class="themes" id="themeBtns"></div>
+    <label for="msg">독도 문구</label>
+    <select id="msg"></select>
+    <button id="printBtn" class="accent">🖨️ 인쇄하기</button>
+    <button id="retakeBtn" class="ghost">🔁 다시 찍기</button>
+    <button id="doneBtn" class="ghost">✅ 처음으로</button>
+    <div id="status"></div>
+  </div>
+</div>
+
+<input type="file" id="nativeCam" accept="image/*" capture="user" hidden>
+<div id="printArea"><img id="printImg" alt=""></div>
+
+<script id="appjs">
+/* ===================== 설정 ===================== */
+const DEFAULTS = {
+  title: '2026 독도교육주간', school: '개포중학교 학생회', date: '2026. 10. 20.',
+  messages: ['독도는 대한민국의 아름다운 섬입니다', '우리 땅 독도, 우리가 지킵니다',
+             '10월 25일은 독도의 날', '동해 끝 우리 섬, 독도를 사랑해요', '독도야, 우리가 늘 기억할게'],
+  saveToDrive: false
+};
+let settings = Object.assign({}, DEFAULTS);
+/* Apps Script 연결: 웹앱 화면이면 직접, '자동 촬영 창'(새 창)이면 원래 웹앱 창을 통해 연결 */
+function gasRun() {
+  try { if (window.google && google.script && google.script.run) return google.script.run; } catch (e) {}
+  try {
+    const o = window.opener;
+    if (o && o.google && o.google.script && o.google.script.run) return o.google.script.run;
+  } catch (e) {}
+  return null;
+}
+const HAS_GAS = !!gasRun();
+const IN_POPUP = window.name === 'dokdo4cut_live';
+/* 새 창으로 띄울 때 쓰려고, 처음 상태의 화면 코드를 보관 (구글이 끼워 넣은 스크립트는 제외) */
+const PRISTINE_HTML = (() => {
+  try {
+    const c = document.documentElement.cloneNode(true);
+    c.querySelectorAll('script:not(#appjs)').forEach(x => x.remove());
+    return '<!DOCTYPE html>' + c.outerHTML;
+  } catch (e) { return ''; }
+})();
+const IS_TABLET = /iPad|iPhone|iPod|Android/i.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);   // iPadOS는 Mac처럼 보임
+
+/* ===== 아이패드용 독립 실행 설정 =====
+   이 파일을 GitHub Pages 등 별도 주소에 올려 쓸 때만 채웁니다.
+   API_URL : Apps Script 웹앱 배포 URL (…/exec 로 끝나는 주소)
+   API_KEY : Code.gs 의 API_KEY 와 같은 값 */
+const API_URL = 'https://script.google.com/macros/s/AKfycbwAP4KEbJ5d72CEo0QVp5_-IvNSnGWUN9oJsgSrFUd4gep836peLY7d46CSIFn7DuxEVQ/exec';
+const API_KEY = 'dokdo2026';
+const USE_API = !HAS_GAS && !!API_URL;
+
+const THEMES = {
+  sea:     { label:'동해 바다', bg:['#0b3d91','#1fa2d6'], text:'#ffffff', sub:'#d8f1ff', accent:'#ffd54a', wave:['#7fd3f7','#ffffff'], btn:'#1565c0' },
+  sunrise: { label:'독도 해돋이', bg:['#ff7e5f','#ffc37b'], text:'#ffffff', sub:'#fff4e3', accent:'#fff2a8', wave:['#ffd7b0','#ffffff'], btn:'#f06d4f', sun:true },
+  night:   { label:'독도의 밤', bg:['#0a1033','#2b3a86'], text:'#ffffff', sub:'#c8d6ff', accent:'#9fd3ff', wave:['#3f5bb5','#a9c4ff'], btn:'#1c2766', stars:true },
+  pastel:  { label:'하늘 파스텔', bg:['#e9f7ff','#b6e1fb'], text:'#0b3d91', sub:'#28588f', accent:'#e63946', wave:['#7cc6ee','#ffffff'], btn:'#5fb3e6' }
+};
+let themeKey = 'sea';
+
+/* ===================== 요소 ===================== */
+const $ = id => document.getElementById(id);
+const video = $('video'), startBtn = $('startBtn');
+let shots = [];
+let busy = false;
+let stripCanvas = null, sheetCanvas = null, saved = false;
+
+/* ===================== 시작 ===================== */
+async function init() {
+  buildThemeButtons();
+  loadSettings();
+  await startCamera();
+}
+
+function loadSettings() {
+  if (HAS_GAS) {
+    gasRun()
+      .withSuccessHandler(applySettings)
+      .withFailureHandler(() => applySettings(DEFAULTS))
+      .getSettings();
+  } else if (USE_API) {
+    fetch(API_URL + '?api=settings')
+      .then(r => r.json())
+      .then(applySettings)
+      .catch(() => applySettings(DEFAULTS));
+  } else {
+    applySettings(DEFAULTS);
+  }
+}
+function applySettings(s) {
+  settings = Object.assign({}, DEFAULTS, s || {});
+  $('eventName').textContent = settings.title + (settings.school ? ' · ' + settings.school : '');
+  const sel = $('msg');
+  sel.innerHTML = '';
+  settings.messages.forEach((m, i) => {
+    const o = document.createElement('option'); o.value = i; o.textContent = m; sel.appendChild(o);
+  });
+}
+
+/* 카메라: 기본은 전면(셀카). 카메라가 2개 이상이면 '카메라 전환' 버튼으로 후면 카메라 사용 */
+let facing = 'user', stream = null;
+async function startCamera() {
+  try {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { width:{ ideal:1920 }, height:{ ideal:1080 }, facingMode: facing }, audio:false
+    });
+    video.srcObject = stream;
+    video.classList.toggle('mirror', facing === 'user');   // 전면 카메라만 거울처럼
+    await video.play();
+    startBtn.disabled = false;
+    $('camError').hidden = true;
+    keepScreenOn();
+    try {
+      const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+      $('switchBtn').style.display = cams.length > 1 ? 'block' : 'none';
+    } catch (e) {}
+  } catch (e) {
+    const box = $('camError');
+    box.hidden = false;
+    if (HAS_GAS && !IN_POPUP && PRISTINE_HTML) {
+      showOpenLive();       // 구글 웹앱 화면 안에서 카메라가 막힘 → 촬영 전용 화면(새 창)으로
+    } else if (IS_TABLET) {
+      enableNativeMode();   // 새 창에서도 막히면 마지막 대비책: 기본 카메라 앱
+    } else {
+      box.innerHTML = '카메라를 켤 수 없어요 😢<br>주소창 왼쪽의 카메라 아이콘에서 <b>허용</b>을 누른 뒤<br>페이지를 새로고침 해 주세요.<br><small>(' + (e.name || e) + ')</small>';
+    }
+  }
+}
+$('switchBtn').addEventListener('click', () => {
+  if (busy) return;
+  facing = facing === 'user' ? 'environment' : 'user';
+  startCamera();
+});
+
+/* 촬영 중 태블릿 화면이 꺼지지 않게 (지원하는 브라우저에서만) */
+let wakeLock = null;
+async function keepScreenOn() {
+  try { if ('wakeLock' in navigator && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { wakeLock = null; keepScreenOn(); }
+});
+
+/* ===================== 촬영 ===================== */
+startBtn.addEventListener('click', () => {
+  if (liveBlocked) return openLiveWindow();
+  if (!nativeMode) return runSession();
+  if (shots.filter(Boolean).length >= 4) finishNative(); else openNative(nextEmpty());
+});
+$('retakeBtn').addEventListener('click', () => {
+  $('result').hidden = true;
+  if (nativeMode) { shots = []; clearThumbs(); updateNativeButton(); } else runSession();
+});
+
+/* ===================== 아이패드 기본 카메라 모드 =====================
+   아이패드 Safari는 Apps Script 화면 안에서 실시간 카메라를 막습니다.
+   대신 기본 카메라 앱을 한 장씩 불러와 4장을 채웁니다. (썸네일을 누르면 그 컷만 다시 찍기) */
+let nativeMode = false, nativeIndex = 0, liveBlocked = false;
+
+/* 웹앱 화면 안에서 카메라가 막혔을 때: 촬영 전용 화면 열기 안내 */
+function showOpenLive() {
+  liveBlocked = true;
+  const box = $('camError');
+  box.hidden = false;
+  box.innerHTML = '<div style="font-size:64px">📸</div>' +
+    '<div style="font-size:26px;font-family:\'Black Han Sans\'">촬영 화면을 열어 주세요</div>' +
+    '<div>이 화면에서는 카메라를 바로 켤 수 없어서<br><b>촬영 전용 화면</b>을 새 창으로 열어요. (4초 자동 촬영)</div>' +
+    '<button id="liveBtn" class="accent" style="width:auto;margin-top:10px;padding:16px 30px;font-size:26px">📸 촬영 화면 열기</button>' +
+    '<div style="font-size:14px;opacity:.8">새 창에서 카메라 허용을 누르면 바로 시작돼요. 이 창은 닫지 말고 그대로 두세요.<br>' +
+    '<a href="#" id="nativeLink" style="color:#9fd3ff">새 창에서도 카메라가 안 되면 → 카메라 앱으로 찍기</a></div>';
+  $('liveBtn').onclick = openLiveWindow;
+  $('nativeLink').onclick = e => { e.preventDefault(); liveBlocked = false; enableNativeMode(); };
+  startBtn.disabled = false;
+  startBtn.textContent = '📸 촬영 화면 열기';
+}
+function enableNativeMode() {
+  nativeMode = true;
+  const box = $('camError');
+  box.hidden = false;
+  box.innerHTML = '<div style="font-size:64px">📷</div>' +
+    '<div style="font-size:24px;font-family:\'Black Han Sans\'">아이패드 카메라로 한 장씩 찍어요</div>' +
+    '<div>오른쪽 <b>사진 찍기</b> 버튼 → 카메라가 열리면 촬영 → <b>사진 사용</b><br>4장을 다 찍으면 독도 프레임이 완성돼요!</div>';
+  $('interval').closest('aside').querySelector('label[for="interval"]').style.display = 'none';
+  $('interval').style.display = 'none';
+  $('hint').innerHTML = '사진 찍기를 <b>4번</b> 눌러 네 컷을 채워요.<br>마음에 안 드는 컷은 아래 칸을 눌러 다시 찍을 수 있어요.<br>친구가 아이패드를 들고 찍어 주면 더 편해요.';
+  [...$('thumbs').children].forEach((d, i) => { d.style.cursor = 'pointer'; d.onclick = () => openNative(i); });
+  startBtn.disabled = false;
+  updateNativeButton();
+}
+/* 구글 화면 밖(새 창)에서 같은 촬영 화면을 엽니다. 새 창은 아이패드에서도 실시간 카메라가 허용될 수 있어요. */
+function openLiveWindow() {
+  const url = URL.createObjectURL(new Blob([PRISTINE_HTML], { type: 'text/html' }));
+  const w = window.open(url, 'dokdo4cut_live');
+  if (!w) { alert('팝업이 차단됐어요. 설정 > Safari > 팝업 차단을 끄고 다시 눌러 주세요.'); return; }
+}
+function nextEmpty() {
+  for (let i = 0; i < 4; i++) if (!shots[i]) return i;
+  return 0;
+}
+function updateNativeButton() {
+  const n = shots.filter(Boolean).length;
+  startBtn.textContent = n >= 4 ? '✨ 프레임 완성하기' : '📷 ' + (nextEmpty() + 1) + '번째 사진 찍기';
+}
+function openNative(i) {
+  unlockAudio();
+  nativeIndex = i;
+  const inp = $('nativeCam');
+  inp.value = '';
+  inp.click();
+}
+$('nativeCam').addEventListener('change', e => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  const img = new Image();
+  const u = URL.createObjectURL(f);
+  img.onload = () => {
+    const W = 1040, H = 700, c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const ctx = c.getContext('2d');
+    const vw = img.naturalWidth, vh = img.naturalHeight, ratio = W / H;
+    let sw = vw, sh = vw / ratio;
+    if (sh > vh) { sh = vh; sw = vh * ratio; }
+    ctx.drawImage(img, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, W, H);
+    URL.revokeObjectURL(u);
+    shots[nativeIndex] = c;
+    showThumb(nativeIndex, c);
+    beep(1200, 0.12);
+    updateNativeButton();
+    if (shots.filter(Boolean).length >= 4) finishNative();
+  };
+  img.onerror = () => { URL.revokeObjectURL(u); alert('사진을 불러오지 못했어요. 다시 찍어 주세요.'); };
+  img.src = u;
+});
+async function finishNative() {
+  await document.fonts.load('60px "Black Han Sans"').catch(() => {});
+  await document.fonts.load('24px "Gowun Dodum"').catch(() => {});
+  saved = false;
+  compose();
+  $('status').textContent = '';
+  $('result').hidden = false;
+}
+$('doneBtn').addEventListener('click', resetAll);
+$('printBtn').addEventListener('click', doPrint);
+$('msg').addEventListener('change', () => { saved = false; compose(); });
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function runSession() {
+  unlockAudio();   // 태블릿: 터치 직후에 소리를 열어 둬야 카운트다운 소리가 납니다
+  busy = true;
+  startBtn.disabled = true;
+  shots = [];
+  clearThumbs();
+  await document.fonts.load('60px "Black Han Sans"').catch(() => {});
+  await document.fonts.load('24px "Gowun Dodum"').catch(() => {});
+  const sec = parseInt($('interval').value, 10) || 3;
+  const badge = $('shotBadge');
+  badge.style.display = 'block';
+  for (let i = 0; i < 4; i++) {
+    badge.textContent = (i + 1) + ' / 4 컷';
+    for (let n = sec; n > 0; n--) {
+      $('count').textContent = n;
+      beep(660, 0.08);
+      await sleep(1000);
+    }
+    $('count').textContent = '';
+    beep(1200, 0.15);
+    flash();
+    const c = grabFrame();
+    shots.push(c);
+    showThumb(i, c);
+    await sleep(900);
+  }
+  badge.style.display = 'none';
+  startBtn.disabled = false;
+  busy = false;
+  saved = false;
+  compose();
+  $('status').textContent = '';
+  $('result').hidden = false;
+}
+
+function grabFrame() {
+  const W = 1040, H = 700, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
+  const ratio = W / H;
+  let sw = vw, sh = vw / ratio;
+  if (sh > vh) { sh = vh; sw = vh * ratio; }
+  const sx = (vw - sw) / 2, sy = (vh - sh) / 2;
+  if (facing === 'user') { ctx.translate(W, 0); ctx.scale(-1, 1); }   // 전면 카메라는 화면에 보이는 그대로(거울)
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, W, H);
+  return c;
+}
+
+function flash() {
+  const f = $('flash');
+  f.style.transition = 'none'; f.style.opacity = 1;
+  requestAnimationFrame(() => { f.style.transition = 'opacity .45s'; f.style.opacity = 0; });
+}
+
+let audioCtx = null;
+function unlockAudio() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch (e) {}
+}
+function beep(freq, dur) {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = freq; o.connect(g); g.connect(audioCtx.destination);
+    g.gain.setValueAtTime(0.15, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    o.start(); o.stop(audioCtx.currentTime + dur);
+  } catch (e) {}
+}
+
+function clearThumbs() {
+  [...$('thumbs').children].forEach((d, i) => { d.innerHTML = i + 1; });
+}
+function showThumb(i, c) {
+  const d = $('thumbs').children[i];
+  d.innerHTML = '';
+  const t = document.createElement('canvas');
+  t.width = 260; t.height = 175;
+  t.getContext('2d').drawImage(c, 0, 0, 260, 175);
+  d.appendChild(t);
+}
+
+function resetAll() {
+  $('result').hidden = true;
+  shots = []; clearThumbs();
+  $('name').value = '';
+  $('status').textContent = '';
+  if (nativeMode) updateNativeButton();
+}
+
+/* ===================== 프레임 그리기 ===================== */
+function buildThemeButtons() {
+  const box = $('themeBtns');
+  Object.keys(THEMES).forEach(k => {
+    const b = document.createElement('button');
+    b.textContent = THEMES[k].label;
+    b.style.background = THEMES[k].btn;
+    if (k === themeKey) b.classList.add('on');
+    b.onclick = () => {
+      themeKey = k;
+      [...box.children].forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      saved = false;
+      compose();
+    };
+    box.appendChild(b);
+  });
+}
+
+function currentMessage() {
+  const i = parseInt($('msg').value, 10);
+  return settings.messages[isNaN(i) ? 0 : i] || settings.messages[0];
+}
+
+function compose() {
+  if (shots.filter(Boolean).length < 4) return;
+  stripCanvas = document.createElement('canvas');
+  stripCanvas.width = 600; stripCanvas.height = 1800;     // 2 x 6 inch @300dpi
+  drawStrip(stripCanvas.getContext('2d'), THEMES[themeKey], currentMessage());
+
+  sheetCanvas = document.createElement('canvas');          // 4 x 6 inch @300dpi (스트립 2장)
+  sheetCanvas.width = 1200; sheetCanvas.height = 1800;
+  const s = sheetCanvas.getContext('2d');
+  s.drawImage(stripCanvas, 0, 0);
+  s.drawImage(stripCanvas, 600, 0);
+
+  $('preview').src = stripCanvas.toDataURL('image/jpeg', 0.9);
+}
+
+function drawStrip(ctx, t, msg) {
+  const W = 600, H = 1800;
+  // 배경
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, t.bg[0]); g.addColorStop(1, t.bg[1]);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+  if (t.stars) drawStars(ctx, W, H);
+  if (t.sun) {
+    const sg = ctx.createRadialGradient(470, 70, 5, 470, 70, 70);
+    sg.addColorStop(0, 'rgba(255,250,210,1)'); sg.addColorStop(1, 'rgba(255,250,210,0)');
+    ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(470, 70, 70, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff6c9'; ctx.beginPath(); ctx.arc(470, 70, 26, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // ---------- 상단: 제목 + 독도 그림 ----------
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = t.text;
+  ctx.font = '64px "Black Han Sans"';
+  ctx.fillText('독도 네컷', 38, 92);
+  ctx.fillStyle = t.sub;
+  ctx.font = '23px "Gowun Dodum"';
+  fitText(ctx, settings.title, 38, 132, 330, 23, '"Gowun Dodum"');
+
+  gull(ctx, 528, 48, 12, t.text); gull(ctx, 560, 30, 9, t.text); gull(ctx, 505, 28, 7, t.text);
+  waves(ctx, 140, 5, 60, 0, W, 40, t.wave[0], 0.55);
+  drawDokdo(ctx, 385, 150, 195, t);
+  waves(ctx, 150, 4, 45, 1.3, W, 30, t.wave[1], 0.35);
+
+  // ---------- 사진 4장 ----------
+  const PX = 40, PW = 520, PH = 350, TOP = 178, GAP = 14;
+  for (let i = 0; i < 4; i++) {
+    const y = TOP + i * (PH + GAP);
+    ctx.fillStyle = '#ffffff';
+    rr(ctx, PX - 6, y - 6, PW + 12, PH + 12, 12); ctx.fill();
+    ctx.save();
+    rr(ctx, PX, y, PW, PH, 7); ctx.clip();
+    ctx.drawImage(shots[i], PX, y, PW, PH);
+    ctx.restore();
+  }
+  // 첫 컷 모서리 태그
+  tag(ctx, PX + 10, TOP + 10, '#독도사랑', t);
+
+  // ---------- 하단: 문구 + 정보 ----------
+  const fy = TOP + 4 * (PH + GAP);   // 1634
+  ctx.textAlign = 'center';
+  ctx.fillStyle = t.text;
+  fitText(ctx, msg, W / 2, fy + 46, 540, 36, '"Black Han Sans"');
+  ctx.fillStyle = t.sub;
+  ctx.font = '17px "Gowun Dodum"';
+  ctx.fillText('경상북도 울릉군 울릉읍 독도리 · 북위 37°14′ 동경 131°52′', W / 2, fy + 82);
+  ctx.fillStyle = t.accent;
+  ctx.font = '21px "Gowun Dodum"';
+  const info = [settings.school, settings.date].filter(Boolean).join('  ·  ');
+  if (info) ctx.fillText(info, W / 2, fy + 114);
+
+  waves(ctx, H - 38, 6, 55, 0.5, W, 40, t.wave[0], 0.6);
+  waves(ctx, H - 24, 5, 40, 2.1, W, 30, t.wave[1], 0.5);
+}
+
+function fitText(ctx, text, x, y, maxW, size, family) {
+  let s = size;
+  do { ctx.font = s + 'px ' + family; s -= 1; } while (ctx.measureText(text).width > maxW && s > 12);
+  ctx.fillText(text, x, y);
+}
+
+function rr(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function tag(ctx, x, y, text, t) {
+  ctx.font = '20px "Black Han Sans"';
+  const w = ctx.measureText(text).width + 22;
+  ctx.fillStyle = 'rgba(11,61,145,0.82)';
+  rr(ctx, x, y, w, 34, 17); ctx.fill();
+  ctx.fillStyle = '#ffffff'; ctx.textAlign = 'left';
+  ctx.fillText(text, x + 11, y + 25);
+}
+
+function waves(ctx, y, amp, len, phase, W, h, color, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(0, y);
+  for (let x = 0; x <= W; x += 6) ctx.lineTo(x, y + Math.sin(x / len * Math.PI * 2 + phase) * amp);
+  ctx.lineTo(W, y + h); ctx.lineTo(0, y + h); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+function gull(ctx, x, y, s, color) {
+  ctx.save();
+  ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x - s, y);
+  ctx.quadraticCurveTo(x - s / 2, y - s * 0.7, x, y);
+  ctx.quadraticCurveTo(x + s / 2, y - s * 0.7, x + s, y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* 서도(왼쪽, 높고 뾰족) + 동도(오른쪽, 낮고 넓음, 등대) */
+function drawDokdo(ctx, x, base, w, t) {
+  const rock = ctx.createLinearGradient(0, base - w * 0.55, 0, base);
+  rock.addColorStop(0, '#5f8f55'); rock.addColorStop(0.35, '#6b5a4c'); rock.addColorStop(1, '#3a2e27');
+  ctx.save();
+  ctx.fillStyle = rock;
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 2;
+  // 서도
+  ctx.beginPath();
+  ctx.moveTo(x, base);
+  ctx.quadraticCurveTo(x + w * 0.08, base - w * 0.22, x + w * 0.16, base - w * 0.4);
+  ctx.lineTo(x + w * 0.21, base - w * 0.47);
+  ctx.lineTo(x + w * 0.25, base - w * 0.52);
+  ctx.lineTo(x + w * 0.29, base - w * 0.44);
+  ctx.quadraticCurveTo(x + w * 0.35, base - w * 0.32, x + w * 0.38, base - w * 0.2);
+  ctx.quadraticCurveTo(x + w * 0.42, base - w * 0.07, x + w * 0.47, base);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  // 동도
+  const x2 = x + w * 0.5;
+  ctx.beginPath();
+  ctx.moveTo(x2, base);
+  ctx.quadraticCurveTo(x2 + w * 0.04, base - w * 0.2, x2 + w * 0.12, base - w * 0.27);
+  ctx.lineTo(x2 + w * 0.2, base - w * 0.31);
+  ctx.lineTo(x2 + w * 0.26, base - w * 0.23);
+  ctx.lineTo(x2 + w * 0.33, base - w * 0.29);
+  ctx.quadraticCurveTo(x2 + w * 0.43, base - w * 0.2, x2 + w * 0.5, base);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  // 등대 (동도)
+  const lx = x2 + w * 0.16, ly = base - w * 0.3;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(lx - 4, ly - 16, 8, 16);
+  ctx.fillStyle = '#e63946';
+  ctx.fillRect(lx - 5, ly - 20, 10, 5);
+  // 섬 이름
+  ctx.fillStyle = t.text; ctx.textAlign = 'center';
+  ctx.font = '15px "Gowun Dodum"';
+  ctx.fillText('서도', x + w * 0.24, base - w * 0.56);
+  ctx.fillText('동도', x2 + w * 0.3, base - w * 0.36);
+  ctx.restore();
+}
+
+function drawStars(ctx, W, H) {
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  ctx.save();
+  ctx.fillStyle = '#ffffff';
+  for (let i = 0; i < 120; i++) {
+    ctx.globalAlpha = 0.3 + rnd() * 0.7;
+    ctx.beginPath(); ctx.arc(rnd() * W, rnd() * H, rnd() * 1.8 + 0.4, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* ===================== 인쇄 + 저장 ===================== */
+
+/* 태블릿에서는 웹앱 화면 안(iframe)에서 인쇄하면 화면 전체가 인쇄되므로,
+   완성 사진만 담은 새 창을 열어 인쇄합니다. 새 창에서 사진을 길게 누르면 '사진에 저장'도 됩니다. */
+function printInNewWindow(url) {
+  const w = window.open('', '_blank');
+  if (!w) {
+    $('status').textContent = '⚠️ 팝업이 차단됐어요. 설정 > Safari > 팝업 차단을 끄고 다시 눌러 주세요.';
+    return;
+  }
+  w.document.open();
+  w.document.write(
+    '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>독도 네컷 인쇄</title><style>' +
+    '@page{size:4in 6in;margin:0}' +
+    'html,body{margin:0;background:#0d1b2a;font-family:sans-serif}' +
+    '.bar{display:flex;gap:10px;padding:12px;justify-content:center}' +
+    '.bar button{font-size:20px;padding:14px 22px;border:0;border-radius:12px;background:#ffd54a;font-weight:bold}' +
+    '.bar button.g{background:#e6f1fb}' +
+    'p{color:#cfe3ff;text-align:center;margin:0 0 10px;font-size:15px}' +
+    'img{display:block;margin:0 auto 20px;max-width:92vw;max-height:78vh}' +
+    '@media print{.bar,p{display:none}html,body{background:#fff}img{width:4in;height:6in;max-width:none;max-height:none;margin:0}}' +
+    '</style></head><body>' +
+    '<div class="bar"><button onclick="window.print()">🖨️ 인쇄</button>' +
+    '<button class="g" onclick="window.close()">✕ 닫고 돌아가기</button></div>' +
+    '<p>사진을 길게 누르면 사진 앱에 저장할 수도 있어요</p>' +
+    '<img id="im" src="' + url + '">' +
+    '<script>document.getElementById("im").onload=function(){setTimeout(function(){window.print()},400)};<\/script>' +
+    '</body></html>');
+  w.document.close();
+}
+function doPrint() {
+  if (!sheetCanvas) return;
+  const url = sheetCanvas.toDataURL('image/jpeg', 0.93);
+  if (IS_TABLET) {
+    printInNewWindow(url);          // 아이패드·태블릿: 새 창에서 인쇄(AirPrint)
+  } else {
+    const img = $('printImg');
+    img.onload = () => setTimeout(() => window.print(), 150);
+    img.src = url;
+  }
+
+  if (!settings.saveToDrive || (!HAS_GAS && !USE_API)) { $('status').textContent = '🖨️ 인쇄 창을 열었어요'; return; }
+  if (saved) return;
+  saved = true;
+  $('status').textContent = '☁️ 드라이브에 저장 중…';
+  const ok = r => { $('status').textContent = '✅ 오늘의 ' + r.count + '번째 독도 네컷 저장 완료!'; };
+  const fail = e => { saved = false; $('status').textContent = '⚠️ 저장 실패: ' + (e && e.message ? e.message : e); };
+  const name = $('name').value.trim(), message = currentMessage(), theme = THEMES[themeKey].label;
+  if (HAS_GAS) {
+    gasRun().withSuccessHandler(ok).withFailureHandler(fail).saveShot(url, name, message, theme);
+  } else {
+    // text/plain 으로 보내야 브라우저 사전검사(CORS) 없이 Apps Script로 바로 전달됩니다
+    fetch(API_URL, { method:'POST', body: JSON.stringify({ key:API_KEY, dataUrl:url, name, message, theme }) })
+      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error(r.error || '알 수 없는 오류'); ok(r); })
+      .catch(fail);
+  }
+}
+
+init();   // 모든 함수·변수가 준비된 뒤 시작
+</script>
+</body>
+</html>
