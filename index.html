@@ -3,6 +3,7 @@
 <head>
 <base target="_top">
 <meta charset="utf-8">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Gowun+Dodum&display=swap" rel="stylesheet">
 <style>
   :root { --navy:#0b3d91; --sea:#1fa2d6; --sun:#ffd54a; --ink:#0d1b2a; --paper:#f3f9ff; }
@@ -66,6 +67,9 @@
   .themes { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .themes button { font-size:17px; padding:10px; margin:0; box-shadow:none; border:3px solid transparent; color:#fff; }
   .themes button.on { border-color:var(--ink); }
+  #queueBox { margin-top:16px; padding:12px 14px; border-radius:12px; background:#e6f1fb; color:#163e6b; font-size:16px; line-height:1.5; }
+  #queueBox b { color:#0b3d91; }
+  #queueBox button { font-size:18px; padding:10px; margin-top:8px; }
   #status { min-height:24px; margin-top:12px; font-size:16px; color:#163e6b; }
   /* 인쇄 영역 */
   #printArea { display:none; }
@@ -99,8 +103,8 @@
     </section>
     <aside id="panel">
       <h2>촬영 준비</h2>
-      <label for="name">이름 (선택)</label>
-      <input id="name" maxlength="20" placeholder="예: 3학년 2반 김독도">
+      <label for="name">그룹 이름 (선택)</label>
+      <input id="name" maxlength="20" placeholder="예: 3학년 2반 1모둠">
       <label for="interval">카운트다운</label>
       <select id="interval">
         <option value="3">3초</option>
@@ -112,6 +116,11 @@
         버튼을 누르면 카운트다운 후 <b>4번</b> 촬영해요.<br>
         촬영이 끝나면 프레임 색과 문구를 고른 뒤<br><b>인쇄하기</b>를 누르세요.
       </p>
+      <div id="queueBox" hidden>
+        📄 A4 모으는 중: <b id="queueCount">0 / 2</b> 그룹<br>
+        <small>정해진 그룹 수가 모이면 A4 PDF가 자동으로 만들어져요.</small>
+        <button id="flushBtn" class="ghost" type="button">📄 지금까지 모은 그룹으로 A4 만들기</button>
+      </div>
     </aside>
   </main>
 </div>
@@ -124,7 +133,8 @@
     <div class="themes" id="themeBtns"></div>
     <label for="msg">독도 문구</label>
     <select id="msg"></select>
-    <button id="printBtn" class="accent">🖨️ 인쇄하기</button>
+    <button id="saveBtn" class="accent">💾 저장하고 A4에 담기</button>
+    <button id="printBtn" class="ghost">🖨️ 이 사진만 바로 인쇄</button>
     <button id="retakeBtn" class="ghost">🔁 다시 찍기</button>
     <button id="doneBtn" class="ghost">✅ 처음으로</button>
     <div id="status"></div>
@@ -140,7 +150,9 @@ const DEFAULTS = {
   title: '2026 독도교육주간', school: '개포중학교 학생회', date: '2026. 10. 20.',
   messages: ['독도는 대한민국의 아름다운 섬입니다', '우리 땅 독도, 우리가 지킵니다',
              '10월 25일은 독도의 날', '동해 끝 우리 섬, 독도를 사랑해요', '독도야, 우리가 늘 기억할게'],
-  saveToDrive: false
+  saveToDrive: false,
+  a4Groups: 2,    // A4 한 장에 들어갈 그룹 수
+  a4Copies: 4     // 그룹마다 인쇄할 장수
 };
 let settings = Object.assign({}, DEFAULTS);
 /* Apps Script 연결: 웹앱 화면이면 직접, '자동 촬영 창'(새 창)이면 원래 웹앱 창을 통해 연결 */
@@ -158,7 +170,7 @@ const IN_POPUP = window.name === 'dokdo4cut_live';
 const PRISTINE_HTML = (() => {
   try {
     const c = document.documentElement.cloneNode(true);
-    c.querySelectorAll('script:not(#appjs)').forEach(x => x.remove());
+    c.querySelectorAll('script:not(#appjs):not([src*="cdnjs"])').forEach(x => x.remove());
     return '<!DOCTYPE html>' + c.outerHTML;
   } catch (e) { return ''; }
 })();
@@ -169,7 +181,7 @@ const IS_TABLET = /iPad|iPhone|iPod|Android/i.test(navigator.userAgent) ||
    이 파일을 GitHub Pages 등 별도 주소에 올려 쓸 때만 채웁니다.
    API_URL : Apps Script 웹앱 배포 URL (…/exec 로 끝나는 주소)
    API_KEY : Code.gs 의 API_KEY 와 같은 값 */
-const API_URL = 'https://script.google.com/macros/s/AKfycbwAP4KEbJ5d72CEo0QVp5_-IvNSnGWUN9oJsgSrFUd4gep836peLY7d46CSIFn7DuxEVQ/exec';
+const API_URL = '';
 const API_KEY = 'dokdo2026';
 const USE_API = !HAS_GAS && !!API_URL;
 
@@ -186,6 +198,7 @@ const $ = id => document.getElementById(id);
 const video = $('video'), startBtn = $('startBtn');
 let shots = [];
 let busy = false;
+let sessionId = Date.now();
 let stripCanvas = null, sheetCanvas = null, saved = false;
 
 /* ===================== 시작 ===================== */
@@ -212,6 +225,7 @@ function loadSettings() {
 }
 function applySettings(s) {
   settings = Object.assign({}, DEFAULTS, s || {});
+  setTimeout(updateQueueBox, 0);
   $('eventName').textContent = settings.title + (settings.school ? ' · ' + settings.school : '');
   const sel = $('msg');
   sel.innerHTML = '';
@@ -266,7 +280,7 @@ startBtn.addEventListener('click', () => {
 });
 $('retakeBtn').addEventListener('click', () => {
   $('result').hidden = true;
-  if (nativeMode) { shots = []; clearThumbs(); updateNativeButton(); } else runSession();
+  if (nativeMode) { sessionId = Date.now(); shots = []; clearThumbs(); updateNativeButton(); } else runSession();
 });
 
 /* ===================== 아이패드 기본 카메라 모드 =====================
@@ -366,6 +380,7 @@ async function runSession() {
   unlockAudio();   // 태블릿: 터치 직후에 소리를 열어 둬야 카운트다운 소리가 납니다
   busy = true;
   startBtn.disabled = true;
+  sessionId = Date.now();
   shots = [];
   clearThumbs();
   await document.fonts.load('60px "Black Han Sans"').catch(() => {});
@@ -449,6 +464,7 @@ function showThumb(i, c) {
 
 function resetAll() {
   $('result').hidden = true;
+  sessionId = Date.now();
   shots = []; clearThumbs();
   $('name').value = '';
   $('status').textContent = '';
@@ -691,29 +707,147 @@ function doPrint() {
   if (!sheetCanvas) return;
   const url = sheetCanvas.toDataURL('image/jpeg', 0.93);
   if (IS_TABLET) {
-    printInNewWindow(url);          // 아이패드·태블릿: 새 창에서 인쇄(AirPrint)
+    printInNewWindow(url);          // 태블릿: 새 창에서 인쇄
   } else {
     const img = $('printImg');
     img.onload = () => setTimeout(() => window.print(), 150);
     img.src = url;
   }
+}
 
-  if (!settings.saveToDrive || (!HAS_GAS && !USE_API)) { $('status').textContent = '🖨️ 인쇄 창을 열었어요'; return; }
-  if (saved) return;
-  saved = true;
-  $('status').textContent = '☁️ 드라이브에 저장 중…';
-  const ok = r => { $('status').textContent = '✅ 오늘의 ' + r.count + '번째 독도 네컷 저장 완료!'; };
-  const fail = e => { saved = false; $('status').textContent = '⚠️ 저장 실패: ' + (e && e.message ? e.message : e); };
-  const name = $('name').value.trim(), message = currentMessage(), theme = THEMES[themeKey].label;
-  if (HAS_GAS) {
-    gasRun().withSuccessHandler(ok).withFailureHandler(fail).saveShot(url, name, message, theme);
-  } else {
-    // text/plain 으로 보내야 브라우저 사전검사(CORS) 없이 Apps Script로 바로 전달됩니다
-    fetch(API_URL, { method:'POST', body: JSON.stringify({ key:API_KEY, dataUrl:url, name, message, theme }) })
-      .then(r => r.json())
-      .then(r => { if (!r.ok) throw new Error(r.error || '알 수 없는 오류'); ok(r); })
-      .catch(fail);
+/* ---------- 서버(스프레드시트) 호출: 웹앱 화면이면 google.script.run, GitHub 페이지면 fetch ---------- */
+function canSave() { return HAS_GAS || USE_API; }
+function callServer(type, payload) {
+  return new Promise((resolve, reject) => {
+    if (HAS_GAS) {
+      const r = gasRun().withSuccessHandler(resolve).withFailureHandler(reject);
+      if (type === 'a4') r.saveA4(payload.dataUrl, payload.label, payload.groups);
+      else r.saveShot(payload.dataUrl, payload.name, payload.message, payload.theme);
+    } else if (USE_API) {
+      // text/plain 으로 보내야 브라우저 사전검사(CORS) 없이 Apps Script로 바로 전달됩니다
+      fetch(API_URL, { method:'POST', body: JSON.stringify(Object.assign({ key:API_KEY, type }, payload)) })
+        .then(r => r.json())
+        .then(r => r.ok ? resolve(r) : reject(new Error(r.error || '알 수 없는 오류')))
+        .catch(reject);
+    } else {
+      reject(new Error('스프레드시트와 연결되어 있지 않아요'));
+    }
+  });
+}
+
+/* ---------- A4 대기열 (태블릿에 보관 → 새로고침해도 유지) ---------- */
+const QKEY = 'dokdo4cut_a4_queue';
+function loadQueue() { try { return JSON.parse(localStorage.getItem(QKEY) || '[]'); } catch (e) { return []; } }
+function storeQueue(q) { try { localStorage.setItem(QKEY, JSON.stringify(q)); } catch (e) { memQueue = q; } }
+let memQueue = null;
+function getQueue() { return memQueue || loadQueue(); }
+function setQueue(q) { memQueue = null; storeQueue(q); updateQueueBox(); }
+function groupsPerPage() { return Math.max(1, parseInt(settings.a4Groups, 10) || 2); }
+function copiesPerGroup() { return Math.max(1, parseInt(settings.a4Copies, 10) || 4); }
+function updateQueueBox() {
+  const q = getQueue();
+  $('queueBox').hidden = !canSave();
+  $('queueCount').textContent = q.length + ' / ' + groupsPerPage();
+  $('flushBtn').style.display = q.length ? 'block' : 'none';
+}
+$('flushBtn').addEventListener('click', () => {
+  const q = getQueue();
+  if (!q.length) return;
+  if (!confirm(q.length + '개 그룹으로 A4를 지금 만들까요?')) return;
+  buildA4(q, $('queueBox'));
+});
+
+let saving = false;
+$('saveBtn').addEventListener('click', saveAndQueue);
+async function saveAndQueue() {
+  if (!stripCanvas || saving) return;
+  if (!canSave()) { $('status').textContent = '⚠️ 스프레드시트와 연결되어 있지 않아 저장할 수 없어요'; return; }
+  saving = true;
+  $('saveBtn').disabled = true;
+  const st = $('status');
+  try {
+    const name = $('name').value.trim(), message = currentMessage(), theme = THEMES[themeKey].label;
+    // 1) 이 그룹 사진 저장 (설정에서 드라이브저장=아니오면 건너뜀)
+    if (settings.saveToDrive && !saved) {
+      st.textContent = '☁️ 사진 저장 중…';
+      await callServer('shot', { dataUrl: sheetCanvas.toDataURL('image/jpeg', 0.92), name, message, theme });
+      saved = true;
+    }
+    // 2) A4 대기열에 담기 (같은 촬영을 다시 저장하면 덮어씀)
+    const q = getQueue().filter(x => x.id !== sessionId);
+    q.push({ id: sessionId, name, time: Date.now(), strip: stripCanvas.toDataURL('image/jpeg', 0.9) });
+    setQueue(q);
+    if (q.length >= groupsPerPage()) {
+      await buildA4(q, st);
+    } else {
+      st.textContent = '✅ 저장 완료! A4에 ' + q.length + ' / ' + groupsPerPage() + ' 그룹 담김 · ✅ 처음으로를 눌러 다음 그룹을 찍어요';
+    }
+  } catch (e) {
+    st.textContent = '⚠️ 저장 실패: ' + (e && e.message ? e.message : e);
+  } finally {
+    saving = false;
+    $('saveBtn').disabled = false;
   }
+}
+
+/* A4 한 장 만들기: 그룹마다 한 줄, 그룹당 정해진 장수만큼 같은 스트립을 나란히 */
+async function buildA4(queue, statusEl) {
+  const items = queue.slice(0, groupsPerPage());
+  statusEl.textContent = '📄 A4 만드는 중…';
+  const imgs = await Promise.all(items.map(it => new Promise((res, rej) => {
+    const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = it.strip;
+  })));
+  const a4 = drawA4(imgs, items.map(it => it.name), groupsPerPage(), copiesPerGroup());
+  const label = items.map((it, i) => it.name || ('그룹' + (i + 1))).join(', ');
+  let dataUrl;
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: a4.landscape ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
+    doc.addImage(a4.canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, a4.wmm, a4.hmm);
+    dataUrl = doc.output('datauristring');
+  } catch (e) {
+    dataUrl = a4.canvas.toDataURL('image/jpeg', 0.92);   // PDF 도구를 못 불러오면 이미지로 저장
+  }
+  const r = await callServer('a4', { dataUrl, label, groups: items.length });
+  setQueue(getQueue().filter(x => !items.some(it => it.id === x.id)));
+  statusEl.innerHTML = '📄 <b>A4 ' + r.count + '번</b> 완성! (' + label + ')<br>노트북에서 스프레드시트 [A4인쇄] 시트의 링크를 눌러 인쇄하세요.';
+  return r;
+}
+
+function drawA4(imgs, names, rows, copies) {
+  const DPMM = 200 / 25.4;                       // 200dpi
+  const M = 8, GAPX = 3, GAPY = 8;               // 여백·간격(mm), 줄 사이에 그룹 이름
+  function fit(W, H) {
+    let h = (H - 2 * M - rows * GAPY + GAPY - 4) / rows;   // 마지막 줄 아래 이름 공간 4mm
+    let w = h / 3;
+    if (copies * w + (copies - 1) * GAPX > W - 2 * M) { w = (W - 2 * M - (copies - 1) * GAPX) / copies; h = w * 3; }
+    return { w, h };
+  }
+  const P = fit(210, 297), L = fit(297, 210);
+  const landscape = L.w > P.w;
+  const wmm = landscape ? 297 : 210, hmm = landscape ? 210 : 297;
+  const { w, h } = landscape ? L : P;
+  const c = document.createElement('canvas');
+  c.width = Math.round(wmm * DPMM); c.height = Math.round(hmm * DPMM);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height);
+  const gridW = copies * w + (copies - 1) * GAPX;
+  const gridH = rows * h + (rows - 1) * GAPY + 4;
+  const x0 = (wmm - gridW) / 2, y0 = (hmm - gridH) / 2;
+  ctx.textBaseline = 'top';
+  imgs.forEach((im, r) => {
+    const y = y0 + r * (h + GAPY);
+    for (let k = 0; k < copies; k++) {
+      const x = x0 + k * (w + GAPX);
+      ctx.drawImage(im, x * DPMM, y * DPMM, w * DPMM, h * DPMM);
+      ctx.strokeStyle = '#c8c8c8'; ctx.lineWidth = 1;            // 자르기 안내선
+      ctx.strokeRect(x * DPMM, y * DPMM, w * DPMM, h * DPMM);
+    }
+    ctx.fillStyle = '#5a6b80';
+    ctx.font = Math.round(3 * DPMM) + 'px "Gowun Dodum", sans-serif';
+    ctx.fillText('✂ ' + (names[r] || ('그룹 ' + (r + 1))), x0 * DPMM, (y + h + 1) * DPMM);
+  });
+  return { canvas: c, landscape, wmm, hmm };
 }
 
 init();   // 모든 함수·변수가 준비된 뒤 시작
