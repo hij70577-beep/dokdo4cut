@@ -90,6 +90,7 @@
   <header class="top">
     <h1>📸 독도 네컷</h1>
     <p id="eventName">독도교육주간</p>
+    <p id="connBadge" style="font-size:15px;margin:6px 0 0"></p>
   </header>
   <main>
     <section id="stage">
@@ -212,18 +213,36 @@ async function init() {
   await startCamera();
 }
 
+/* 화면 위쪽에 스프레드시트 연결 상태 표시 (현장에서 바로 원인을 알 수 있게) */
+let serverReady = false;
+function setConn(ok, msg) {
+  serverReady = ok;
+  const b = $('connBadge');
+  b.style.color = ok ? '#1b6e3a' : '#b3261e';
+  b.textContent = (ok ? '🟢 ' : '🔴 ') + msg;
+}
+function checkServerSettings(s) {
+  if (s && typeof s === 'object' && 'a4Groups' in s) setConn(true, '스프레드시트 연결됨 · A4 ' + s.a4Groups + '그룹 × ' + s.a4Copies + '장');
+  else setConn(false, 'Apps Script가 예전 버전이에요 → 배포 관리 ✏️ → 버전 "새 버전" → 배포');
+}
 function loadSettings() {
   if (HAS_GAS) {
     gasRun()
-      .withSuccessHandler(applySettings)
-      .withFailureHandler(() => applySettings(DEFAULTS))
+      .withSuccessHandler(s => { checkServerSettings(s); applySettings(s); })
+      .withFailureHandler(e => { setConn(false, '스프레드시트 연결 실패: ' + (e && e.message ? e.message : e)); applySettings(DEFAULTS); })
       .getSettings();
   } else if (USE_API) {
     fetch(API_URL + '?api=settings')
-      .then(r => r.json())
-      .then(applySettings)
-      .catch(() => applySettings(DEFAULTS));
+      .then(r => r.text())
+      .then(t => {
+        let s = null;
+        try { s = JSON.parse(t); } catch (e) {}
+        if (!s) { setConn(false, 'Apps Script가 예전 버전이거나 액세스 권한이 "모든 사용자"가 아니에요'); applySettings(DEFAULTS); return; }
+        checkServerSettings(s); applySettings(s);
+      })
+      .catch(e => { setConn(false, '스프레드시트에 접속할 수 없어요 (인터넷 연결·웹앱 주소 확인)'); applySettings(DEFAULTS); });
   } else {
+    setConn(false, '이 파일에 웹앱 주소(API_URL)가 비어 있어요 → 주소가 들어간 index.html을 올려 주세요');
     applySettings(DEFAULTS);
   }
 }
@@ -723,7 +742,7 @@ function drawStars(ctx, W, H) {
 
 /* 태블릿에서는 웹앱 화면 안(iframe)에서 인쇄하면 화면 전체가 인쇄되므로,
    완성 사진만 담은 새 창을 열어 인쇄합니다. 새 창에서 사진을 길게 누르면 '사진에 저장'도 됩니다. */
-function printInNewWindow(url) {
+function printInNewWindow(url, a4) {
   const w = window.open('', '_blank');
   if (!w) {
     $('status').textContent = '⚠️ 팝업이 차단됐어요. 설정 > Safari > 팝업 차단을 끄고 다시 눌러 주세요.';
@@ -734,14 +753,14 @@ function printInNewWindow(url) {
     '<!DOCTYPE html><html><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<title>독도 네컷 인쇄</title><style>' +
-    '@page{size:4in 6in;margin:0}' +
+    (a4 ? '@page{size:A4;margin:0}' : '@page{size:4in 6in;margin:0}') +
     'html,body{margin:0;background:#0d1b2a;font-family:sans-serif}' +
     '.bar{display:flex;gap:10px;padding:12px;justify-content:center}' +
     '.bar button{font-size:20px;padding:14px 22px;border:0;border-radius:12px;background:#ffd54a;font-weight:bold}' +
     '.bar button.g{background:#e6f1fb}' +
     'p{color:#cfe3ff;text-align:center;margin:0 0 10px;font-size:15px}' +
     'img{display:block;margin:0 auto 20px;max-width:92vw;max-height:78vh}' +
-    '@media print{.bar,p{display:none}html,body{background:#fff}img{width:4in;height:6in;max-width:none;max-height:none;margin:0}}' +
+    (a4 ? '@media print{.bar,p{display:none}html,body{background:#fff}img{width:210mm;height:297mm;max-width:none;max-height:none;margin:0}}' : '@media print{.bar,p{display:none}html,body{background:#fff}img{width:4in;height:6in;max-width:none;max-height:none;margin:0}}') +
     '</style></head><body>' +
     '<div class="bar"><button onclick="window.print()">🖨️ 인쇄</button>' +
     '<button class="g" onclick="window.close()">✕ 닫고 돌아가기</button></div>' +
@@ -774,8 +793,13 @@ function callServer(type, payload) {
     } else if (USE_API) {
       // text/plain 으로 보내야 브라우저 사전검사(CORS) 없이 Apps Script로 바로 전달됩니다
       fetch(API_URL, { method:'POST', body: JSON.stringify(Object.assign({ key:API_KEY, type }, payload)) })
-        .then(r => r.json())
-        .then(r => r.ok ? resolve(r) : reject(new Error(r.error || '알 수 없는 오류')))
+        .then(r => r.text())
+        .then(t => {
+          let r = null;
+          try { r = JSON.parse(t); } catch (e) {}
+          if (!r) return reject(new Error('Apps Script가 예전 버전이에요 (배포 관리 → 새 버전으로 배포 필요)'));
+          r.ok ? resolve(r) : reject(new Error(r.error || '알 수 없는 오류'));
+        })
         .catch(reject);
     } else {
       reject(new Error('스프레드시트와 연결되어 있지 않아요'));
@@ -794,7 +818,7 @@ function groupsPerPage() { return Math.max(1, parseInt(settings.a4Groups, 10) ||
 function copiesPerGroup() { return Math.max(1, parseInt(settings.a4Copies, 10) || 4); }
 function updateQueueBox() {
   const q = getQueue();
-  $('queueBox').hidden = !canSave();
+  $('queueBox').hidden = false;
   $('queueCount').textContent = q.length + ' / ' + groupsPerPage();
   $('flushBtn').style.display = q.length ? 'block' : 'none';
 }
@@ -809,29 +833,29 @@ let saving = false;
 $('saveBtn').addEventListener('click', saveAndQueue);
 async function saveAndQueue() {
   if (!stripCanvas || saving) return;
-  if (!canSave()) { $('status').textContent = '⚠️ 스프레드시트와 연결되어 있지 않아 저장할 수 없어요'; return; }
   saving = true;
   $('saveBtn').disabled = true;
   const st = $('status');
   try {
     const name = $('name').value.trim(), message = currentMessage(), theme = THEMES[themeKey].label;
-    // 1) 이 그룹 사진 저장 (설정에서 드라이브저장=아니오면 건너뜀)
-    if (settings.saveToDrive && !saved) {
-      st.textContent = '☁️ 사진 저장 중…';
-      await callServer('shot', { dataUrl: sheetCanvas.toDataURL('image/jpeg', 0.92), name, message, theme });
-      saved = true;
-    }
-    // 2) A4 대기열에 담기 (같은 촬영을 다시 저장하면 덮어씀)
+    // 1) A4 대기열에 먼저 담기 (스프레드시트 연결과 상관없이 A4는 항상 만들어지도록)
     const q = getQueue().filter(x => x.id !== sessionId);
     q.push({ id: sessionId, name, time: Date.now(), strip: stripCanvas.toDataURL('image/jpeg', 0.9) });
     setQueue(q);
+    // 2) 그룹 사진 저장은 따로 (실패해도 A4 진행)
+    let shotMsg = '';
+    if (canSave() && settings.saveToDrive && !saved) {
+      st.textContent = '☁️ 사진 저장 중…';
+      try { await callServer('shot', { dataUrl: sheetCanvas.toDataURL('image/jpeg', 0.92), name, message, theme }); saved = true; }
+      catch (e) { shotMsg = ' (사진 저장은 실패: ' + (e && e.message ? e.message : e) + ')'; }
+    }
     if (q.length >= groupsPerPage()) {
       await buildA4(q, st);
     } else {
-      st.textContent = '✅ 저장 완료! A4에 ' + q.length + ' / ' + groupsPerPage() + ' 그룹 담김 · ✅ 처음으로를 눌러 다음 그룹을 찍어요';
+      st.textContent = '✅ A4에 ' + q.length + ' / ' + groupsPerPage() + ' 그룹 담김' + shotMsg + ' · ✅ 처음으로를 눌러 다음 그룹을 찍어요';
     }
   } catch (e) {
-    st.textContent = '⚠️ 저장 실패: ' + (e && e.message ? e.message : e);
+    st.textContent = '⚠️ 오류: ' + (e && e.message ? e.message : e);
   } finally {
     saving = false;
     $('saveBtn').disabled = false;
@@ -856,7 +880,18 @@ async function buildA4(queue, statusEl) {
   } catch (e) {
     dataUrl = a4.canvas.toDataURL('image/jpeg', 0.92);   // PDF 도구를 못 불러오면 이미지로 저장
   }
-  const r = await callServer('a4', { dataUrl, label, groups: items.length });
+  let r;
+  try {
+    r = await callServer('a4', { dataUrl, label, groups: items.length });
+  } catch (e) {
+    // 서버 저장이 안 돼도 A4는 잃지 않도록: 새 창으로 열어 저장/인쇄할 수 있게
+    const jpg = a4.canvas.toDataURL('image/jpeg', 0.92);
+    printInNewWindow(jpg, true);
+    setQueue(getQueue().filter(x => !items.some(it => it.id === x.id)));
+    statusEl.innerHTML = '⚠️ A4는 만들었지만 스프레드시트 저장 실패: ' + (e && e.message ? e.message : e) +
+      '<br>새 창의 A4 사진을 길게 눌러 저장하거나 인쇄하세요.';
+    return null;
+  }
   setQueue(getQueue().filter(x => !items.some(it => it.id === x.id)));
   statusEl.innerHTML = '📄 <b>A4 ' + r.count + '번</b> 완성! (' + label + ')<br>노트북에서 스프레드시트 [A4인쇄] 시트의 링크를 눌러 인쇄하세요.';
   return r;
